@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.etcode/
+# Your real API keys. Never commit this file.
+api-get/api.json

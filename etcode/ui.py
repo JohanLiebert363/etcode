@@ -175,8 +175,8 @@ class TerminalUI:
             return Prompt.ask(f"[bold {ACCENT}]Select provider[/]", choices=[v for v, _ in options],
                               default=default or options[0][0], console=self.console)
 
-        style = get_style({"questionmark": "#ff8c00", "pointer": "#ff8c00 bold",
-                           "answer": "#ff8c00 bold", "message": "#efb679"}, style_override=False)
+        style = get_style({"message": "#efb679", "questionmark": "#ff8c00", "pointer": "#ff8c00 bold",
+                           "answer": "#ff8c00 bold", }, style_override=False)
         return inquirer.select(
             message="Select provider:",
             choices=[Choice(value=value, name=label) for value, label in options],

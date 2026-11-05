@@ -8,6 +8,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
 from rich.syntax import Syntax
+from rich.text import Text
 
 ACCENT = "dark_orange"
 MAX_DIFF_LINES = 150
@@ -36,8 +37,12 @@ HELP_TEXT = """\
   /help            show this help
   /clear           forget the conversation
   /provider NAME   switch AI (openai, gemini, claude)
-  /auto [on|off]   apply file changes without asking
+  /auto [on|off]   apply file changes without asking (commands still ask)
   /undo            undo the last file change
+  /cd FOLDER       change the folder the AI works in
+  /ls [FOLDER]     list files
+  !COMMAND         run a shell command yourself; its output goes with your next message
+                   (/run COMMAND does the same)
   /status          show provider, model, workspace and context size
   /exit            quit"""
 
@@ -48,8 +53,9 @@ class TerminalUI:
         self.interactive = interactive
         self._session = None
         self._pastes: dict[str, str] = {}
+        self._paste_count = 0
 
-
+    # ---- output ------------------------------------------------------------
 
     def banner(self, workspace) -> None:
         self.console.clear()
@@ -67,9 +73,10 @@ class TerminalUI:
     def warn(self, text: str) -> None:
         self.console.print(f"[yellow]{escape(text)}[/yellow]")
 
-    def error(self, error: BaseException) -> None:
-        self.console.print(f"\n[bold red]ETCODE ERROR[/bold red]")
-        self.console.print(f"[red]{escape(type(error).__name__)}: {escape(str(error))}[/red]")
+    def error(self, error: BaseException, message: str | None = None) -> None:
+        self.console.print("\n[bold red]ETCODE ERROR[/bold red]")
+        text = message or f"{type(error).__name__}: {error}"
+        self.console.print(f"[red]{escape(text)}[/red]")
 
     def show_answer(self, text: str) -> None:
         self.console.print()
@@ -98,7 +105,32 @@ class TerminalUI:
     def tool_error(self, text: str) -> None:
         self.console.print(f"[red]    {escape(text)}[/red]")
 
+    # ---- commands ----------------------------------------------------------
 
+    def show_command(self, command: str) -> None:
+        self.console.print(f"[dim]  $ {escape(command)}[/dim]")
+
+    def show_command_output(self, command: str, output: str) -> None:
+        self.console.print(Panel(Text(output.rstrip() or "(no output)"), title=Text(f"$ {command}"),
+                                 title_align="left", border_style="dim"))
+
+    def confirm_command(self, command: str, folder: str):
+        """Return ("yes" | "no", note). Commands are never auto-approved by /auto."""
+        body = Syntax(command, "bash", theme="ansi_dark", word_wrap=True)
+        self.console.print(Panel(body, title="Run command", title_align="left", border_style=ACCENT,
+                                 subtitle=escape(f"in {folder}. Commands are not sandboxed."), subtitle_align="right"))
+        if not self.interactive:
+            self.warn("Not run: no terminal to ask for approval. Use --allow-commands to allow commands.")
+            return "no", "Approval was not possible in non-interactive mode."
+        answer = Prompt.ask(f"[bold {ACCENT}]Run this command?[/]", choices=["y", "n"], default="n",
+                            console=self.console)
+        if answer == "y":
+            return "yes", ""
+        note = Prompt.ask("What should the AI do instead? (Enter to skip)", default="",
+                          show_default=False, console=self.console)
+        return "no", note.strip()
+
+    # ---- file changes ------------------------------------------------------
 
     def show_change(self, change, diff: str) -> None:
         title = {"create": "Create file", "edit": "Edit file", "delete": "Delete file"}[change.kind]
@@ -155,7 +187,8 @@ class TerminalUI:
                 data = event.data.replace("\r\n", "\n").replace("\r", "\n")
                 lines = data.count("\n") + 1
                 if lines > COLLAPSE_PASTE_LINES or len(data) > COLLAPSE_PASTE_CHARS:
-                    label = f"[Pasted text #{len(self._pastes) + 1}: {lines:,} lines]"
+                    self._paste_count += 1
+                    label = f"[Pasted text #{self._paste_count}: {lines:,} lines]"
                     self._pastes[label] = data
                     event.current_buffer.insert_text(label)
                 else:
@@ -169,9 +202,7 @@ class TerminalUI:
                 style=Style.from_dict({"bottom-toolbar": "noreverse fg:#8a7a6a bg:default"}),
                 mouse_support=False,
             )
-        self._pastes = {}
         self.console.print()
-        self.console.print(Rule(style="bold dark_orange"))
         text = self._session.prompt(bottom_toolbar=toolbar)
         for label, data in self._pastes.items():
             text = text.replace(label, data)

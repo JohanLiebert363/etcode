@@ -34,7 +34,8 @@ def _int_env(name: str, default: int) -> int:
 
 REQUEST_TIMEOUT = _int_env("ETCODE_TIMEOUT", 120)            # seconds per request
 MAX_CONTEXT_TOKENS = _int_env("ETCODE_MAX_CONTEXT_TOKENS", 120_000)  # history budget
-MAX_STEPS = _int_env("ETCODE_MAX_STEPS", 25)                  # tool calls per turn
+MAX_STEPS = _int_env("ETCODE_MAX_STEPS", 25)                  # requests per turn
+REQUESTS_PER_MINUTE = _int_env("ETCODE_REQUESTS_PER_MINUTE", 0)  # 0 = no pacing
 
 
 def model_for(provider: str) -> str:

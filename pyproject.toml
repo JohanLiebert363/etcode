@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "etcode"
-version = "0.2.0"
+version = "0.3.0"
 description = "An AI coding assistant for your terminal (OpenAI, Gemini, Claude) that can edit your files with your approval."
 readme = "README.md"
 license = { text = "MIT" }

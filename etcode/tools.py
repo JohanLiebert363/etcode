@@ -6,6 +6,7 @@ import fnmatch
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ MAX_FILE_BYTES = 2_000_000
 MAX_OUTPUT_CHARS = 50_000
 MAX_LIST = 400
 MAX_SEARCH = 100
+MAX_COMMAND_OUTPUT = 20_000
 
 
 class ToolError(Exception):
@@ -89,6 +91,12 @@ TOOL_SPECS = [
            "new_text": {"type": "string", "description": "Replacement text. May be empty to delete old_text."},
            "replace_all": {"type": "boolean", "description": "Replace every match. Default false."}},
           ["path", "old_text", "new_text"]),
+    _tool("run_command",
+          "Run a shell command in the workspace folder and return its output. Use it for tests, builds, "
+          "git, and similar. The user approves every command. Each command runs in a fresh shell, so "
+          "'cd' does not carry over to the next command.",
+          {"command": {"type": "string"},
+           "timeout_seconds": {"type": "integer", "description": "Default 60, maximum 600."}}, ["command"]),
     _tool("delete_file",
           "Delete one file. The user must approve it, and it can be undone with a backup.",
           {"path": {"type": "string"}}, ["path"]),
@@ -96,6 +104,30 @@ TOOL_SPECS = [
 
 ALLOWED_ARGS = {s["function"]["name"]: set(s["function"]["parameters"]["properties"]) for s in TOOL_SPECS}
 READ_ONLY = {"list_files", "read_file", "search_files"}
+COMMAND_TOOLS = {"run_command"}
+
+
+def _text(value) -> str:
+    if value is None:
+        return ""
+    return value.decode("utf-8", "replace") if isinstance(value, bytes) else value
+
+
+def _clip(text: str) -> str:
+    if len(text) <= MAX_COMMAND_OUTPUT:
+        return text
+    half = MAX_COMMAND_OUTPUT // 2
+    return f"{text[:half]}\n... {len(text) - MAX_COMMAND_OUTPUT:,} characters cut ...\n{text[-half:]}"
+
+
+def _format_output(stdout, stderr) -> str:
+    out, err = _clip(_text(stdout)).rstrip(), _clip(_text(stderr)).rstrip()
+    parts = []
+    if out:
+        parts.append(f"--- stdout ---\n{out}")
+    if err:
+        parts.append(f"--- stderr ---\n{err}")
+    return "\n".join(parts) if parts else "(no output)"
 
 
 def diff_stats(old: str | None, new: str | None) -> tuple[int, int]:
@@ -286,6 +318,23 @@ class Workspace:
         if truncated:
             results.append(f"... stopped at {MAX_SEARCH} matches. Narrow the pattern or path.")
         return "\n".join(results)
+
+    # ---- running commands --------------------------------------------------
+
+    def run_command(self, command, timeout_seconds=60) -> str:
+        """Run a shell command in the workspace. NOT sandboxed: the caller must get approval first."""
+        if not isinstance(command, str) or not command.strip():
+            raise ToolError("The command is empty.")
+        timeout = min(max(_int(timeout_seconds, 60, "timeout_seconds"), 1), 600)
+        try:
+            done = subprocess.run(command, shell=True, cwd=self.root, stdin=subprocess.DEVNULL,
+                                  capture_output=True, text=True, errors="replace", timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            return (f"The command timed out after {timeout}s and was stopped.\n"
+                    f"{_format_output(error.stdout, error.stderr)}")
+        except OSError as error:
+            raise ToolError(f"Could not run the command: {error}")
+        return f"exit code: {done.returncode}\n{_format_output(done.stdout, done.stderr)}"
 
     # ---- changing files ----------------------------------------------------
 

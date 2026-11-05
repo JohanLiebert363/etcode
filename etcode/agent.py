@@ -10,11 +10,14 @@ from . import tools
 
 
 class Agent:
-    def __init__(self, provider: str, workspace: tools.Workspace, ui, auto_approve: bool = False):
+    def __init__(self, provider: str, workspace: tools.Workspace, ui, auto_approve: bool = False,
+                 allow_commands: bool = False):
         self.provider = provider
         self.ws = workspace
         self.ui = ui
-        self.auto_approve = auto_approve
+        self.auto_approve = auto_approve      # file changes only
+        self.allow_commands = allow_commands  # run commands without asking
+        self.commands_run = 0
         self.messages: list[dict] = []
         self.changes_applied = 0
 
@@ -25,15 +28,18 @@ class Agent:
             "You are Etcode, an AI coding assistant running in the user's terminal.\n"
             f"Workspace folder: {self.ws.root}\n"
             f"Operating system: {platform.system()}\n\n"
-            "You can list, search and read files, and create, edit or delete them with tools. "
-            "All paths are relative to the workspace. The user reviews every change before it is applied.\n"
+            "You can list, search and read files, create, edit or delete them, and run shell commands, all with tools. "
+            "All paths are relative to the workspace. The user reviews every change and every command first.\n"
             "Rules:\n"
+            "- Each request you make is slow and may count against a rate limit. When you need several files, "
+            "ask for all of them in one step (several tool calls at once) instead of one at a time.\n"
             "- Read a file before you edit it.\n"
             "- Prefer edit_file with a small, unique old_text over rewriting a whole file.\n"
             "- Make only the changes the user asked for.\n"
             "- If a tool returns an error, fix the arguments and try again.\n"
-            "- If theres something wrong with the file, explain the error to the user and ask to fix it"
             "- If the user declined a change, do not propose the same change again. Follow their note.\n"
+            "- Use run_command for tests, builds and git. Each command runs in a fresh shell, so cd does not persist. "
+            "Never run destructive commands (deleting, force-pushing, formatting disks) unless the user asked.\n"
             "- After changing files, say briefly what changed and why.\n"
             "- Replies are shown as Markdown in a terminal, so keep them short and clear.\n"
             "The user may attach files with @path; their contents appear in the message."
@@ -143,6 +149,19 @@ class Agent:
 
         if name in tools.READ_ONLY:
             return getattr(self.ws, name)(**kwargs)
+
+        if name in tools.COMMAND_TOOLS:
+            command = kwargs.get("command")
+            if not isinstance(command, str) or not command.strip():
+                raise tools.ToolError("The command is empty.")
+            if self.allow_commands:
+                self.ui.show_command(command)
+            else:
+                decision, note = self.ui.confirm_command(command, str(self.ws.root))
+                if decision != "yes":
+                    return "The user declined to run this command." + (f" Their note: {note}" if note else "")
+            self.commands_run += 1
+            return self.ws.run_command(**kwargs)
 
         prepare = {"write_file": self.ws.prepare_write,
                    "edit_file": self.ws.prepare_edit,

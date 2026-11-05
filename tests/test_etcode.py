@@ -9,14 +9,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "main"))
-sys.path.insert(0, str(ROOT / "api-get"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import agent as agent_module  # noqa: E402
-import ai  # noqa: E402
-import attach  # noqa: E402
-import tools  # noqa: E402
+from etcode import agent as agent_module  # noqa: E402
+from etcode import ai, attach, config, tools  # noqa: E402
 
 
 _DIRS = []
@@ -278,10 +274,10 @@ class AgentTests(unittest.TestCase):
 
 class FlaskTests(unittest.TestCase):
     def setUp(self):
-        import app as web
+        from etcode import web
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        web.KEY_FILE = Path(self.tmp.name) / "api.json"
+        config.KEY_FILE = Path(self.tmp.name) / "api.json"
         self.web = web
         self.client = web.app.test_client()
 
@@ -292,30 +288,30 @@ class FlaskTests(unittest.TestCase):
 
     def test_rejects_missing_csrf(self):
         self.client.post("/", data={"openai": "sk-test"})
-        self.assertFalse(self.web.KEY_FILE.exists())
+        self.assertFalse(config.KEY_FILE.exists())
 
     def test_saves_only_filled_fields_and_never_echoes_keys(self):
         resp = self.client.post("/", data={"csrf_token": self.token(), "openai": " sk-test123 ", "gemini": ""},
                                 follow_redirects=True)
-        self.assertEqual(json.loads(self.web.KEY_FILE.read_text()), {"openai": "sk-test123"})
+        self.assertEqual(json.loads(config.KEY_FILE.read_text()), {"openai": "sk-test123"})
         html = resp.get_data(as_text=True)
         self.assertIn("Saved: OpenAI.", html)
         self.assertNotIn("sk-test123", html)
         self.assertIn("Key saved", html)
         if os.name == "posix":
-            self.assertEqual(self.web.KEY_FILE.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(config.KEY_FILE.stat().st_mode & 0o777, 0o600)
 
     def test_merges_with_existing_and_rejects_bad_keys(self):
-        self.web.KEY_FILE.write_text(json.dumps({"claude": "keep"}))
+        config.KEY_FILE.write_text(json.dumps({"claude": "keep"}))
         token = self.token()
         self.client.post("/", data={"csrf_token": token, "gemini": "g-1"})
-        self.assertEqual(json.loads(self.web.KEY_FILE.read_text()), {"claude": "keep", "gemini": "g-1"})
+        self.assertEqual(json.loads(config.KEY_FILE.read_text()), {"claude": "keep", "gemini": "g-1"})
         resp = self.client.post("/", data={"csrf_token": token, "openai": "has space"}, follow_redirects=True)
         self.assertIn("looks wrong", resp.get_data(as_text=True))
-        self.assertNotIn("openai", json.loads(self.web.KEY_FILE.read_text()))
+        self.assertNotIn("openai", json.loads(config.KEY_FILE.read_text()))
 
     def test_empty_submit_and_corrupt_file(self):
-        self.web.KEY_FILE.write_text("not json")
+        config.KEY_FILE.write_text("not json")
         resp = self.client.post("/", data={"csrf_token": self.token()}, follow_redirects=True)
         self.assertIn("at least one API key", resp.get_data(as_text=True))
         self.assertEqual(self.web.load_keys(), {})

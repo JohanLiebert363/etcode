@@ -5,8 +5,16 @@ import json
 import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-KEY_FILE = Path(os.environ.get("ETCODE_KEY_FILE") or ROOT / "api-get" / "api.json")
+def config_dir() -> Path:
+    """Per-user folder for settings: %APPDATA%\\etcode on Windows, ~/.config/etcode elsewhere."""
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "etcode"
+
+
+KEY_FILE = Path(os.environ.get("ETCODE_KEY_FILE") or config_dir() / "api.json")
 
 # Model names can be changed without editing code, for example:
 #   ETCODE_MODEL_CLAUDE=anthropic/claude-opus-5-5

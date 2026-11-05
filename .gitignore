@@ -4,5 +4,6 @@ __pycache__/
 venv/
 .env
 .etcode/
-# Your real API keys. Never commit this file.
-api-get/api.json
+build/
+dist/
+*.egg-info/

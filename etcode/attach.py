@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from tools import ToolError, Workspace
+from .tools import ToolError, Workspace
 
 MENTION = re.compile(r"(?<![\w@/.])@([^\s@]+)")
 TRAILING = ".,;:!?)]}\"'"

@@ -1,4 +1,4 @@
-"""Etcode: an AI coding assistant for your terminal."""
+"""Command line entry point: `etcode` and `etcode keys`."""
 from __future__ import annotations
 
 import argparse
@@ -7,18 +7,24 @@ import sys
 from rich.markup import escape
 from rich.prompt import Prompt
 
-import ai
-import config
-from agent import Agent
-from attach import expand_mentions
-from tools import ToolError, Workspace
-from ui import ACCENT, HELP_TEXT, TerminalUI
+from . import ai
+from . import __version__
+from . import config
+from .agent import Agent
+from .attach import expand_mentions
+from .tools import ToolError, Workspace
+from .ui import ACCENT, HELP_TEXT, TerminalUI
 
 COMMANDS = {"/help", "/exit", "/quit", "/clear", "/provider", "/auto", "/undo", "/status"}
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="Etcode: an AI coding assistant for your terminal.")
+    parser = argparse.ArgumentParser(prog="etcode", description="Etcode: an AI coding assistant for your terminal.")
+    parser.add_argument("--version", action="version", version=f"etcode {__version__}")
+    commands = parser.add_subparsers(dest="command", metavar="[command]")
+    keys = commands.add_parser("keys", help="open the page where you save your API keys")
+    keys.add_argument("--port", type=int, default=5000)
+    keys.add_argument("--no-browser", action="store_true", help="do not open the browser automatically")
     parser.add_argument("-w", "--workspace", default=".", help="folder the AI may read and change (default: current folder)")
     parser.add_argument("-p", "--provider", choices=list(config.PROVIDERS), help="skip the provider question")
     parser.add_argument("--auto", action="store_true", help="apply file changes without asking (use /undo to revert)")
@@ -42,7 +48,7 @@ def handle_command(text: str, agent: Agent, ui: TerminalUI) -> bool:
         if argument not in config.PROVIDERS:
             ui.warn("Usage: /provider openai | gemini | claude")
         elif argument not in config.configured_providers():
-            ui.warn(f"No API key for {argument}. Add one on the setup page first.")
+            ui.warn(f"No API key for {argument}. Run `etcode keys` in another terminal to add one.")
         else:
             agent.provider = argument
             ui.info(f"Now using {argument} ({config.model_for(argument)}).")
@@ -84,6 +90,10 @@ def run_once(agent: Agent, ui: TerminalUI, ws: Workspace, text: str) -> None:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    if args.command == "keys":
+        from .web import serve
+        serve(port=args.port, open_browser=not args.no_browser)
+        return 0
     interactive = sys.stdin.isatty()
     ui = TerminalUI(interactive)
 
@@ -95,7 +105,7 @@ def main(argv=None) -> int:
 
     configured = config.configured_providers()
     if not configured:
-        ui.warn("No API keys found. Run `python api-get/app.py` and add a key, "
+        ui.warn("No API keys found. Run `etcode keys` to add one, "
                 "or set OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY.")
         return 1
     if args.provider and args.provider not in configured:
@@ -154,7 +164,8 @@ def main(argv=None) -> int:
             ui.error(error)
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Console-script entry point."""
     try:
         sys.exit(main())
     except KeyboardInterrupt:

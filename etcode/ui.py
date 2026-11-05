@@ -30,7 +30,7 @@ HELP_TEXT = """\
   Paste            any amount of text is fine and nothing is sent until you press Enter.
                    Big pastes show as [Pasted text #1: N lines]; the full text is sent.
   @path/to/file    attach a file's contents to your message
-  cat big.txt | python main.py      send a very large input without the prompt
+  cat big.txt | etcode      send a very large input without the prompt
 
 [bold]Commands[/bold]
   /help            show this help
@@ -93,13 +93,12 @@ class TerminalUI:
 
     def tool_log(self, name: str, args: dict) -> None:
         target = args.get("path") or args.get("pattern") or ""
-
         self.console.print(f"[dim]  > {escape(name)} {escape(str(target))}[/dim]")
 
     def tool_error(self, text: str) -> None:
         self.console.print(f"[red]    {escape(text)}[/red]")
 
-    # ---- file changes ------------------------------------------------------
+
 
     def show_change(self, change, diff: str) -> None:
         title = {"create": "Create file", "edit": "Edit file", "delete": "Delete file"}[change.kind]

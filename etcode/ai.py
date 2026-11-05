@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 
-import config
+from . import config
 
 MAX_ATTEMPTS = 4
 
@@ -36,8 +36,8 @@ def chat(provider: str, messages: list, tools: list | None = None, notify=None):
     if not key:
         info = config.PROVIDERS[provider]
         raise MissingKeyError(
-            f"No API key for {info['label']}. Add one on the setup page "
-            f"(python api-get/app.py) or set {info['env']}."
+            f"No API key for {info['label']}. Run `etcode keys` to add one, "
+            f"or set {info['env']}."
         )
 
     import litellm  # imported late: it is slow to load

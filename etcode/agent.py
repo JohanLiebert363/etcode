@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 import platform
 
-import ai
-import config
-import tools
+from . import ai
+from . import config
+from . import tools
 
 
 class Agent:
@@ -32,6 +32,7 @@ class Agent:
             "- Prefer edit_file with a small, unique old_text over rewriting a whole file.\n"
             "- Make only the changes the user asked for.\n"
             "- If a tool returns an error, fix the arguments and try again.\n"
+            "- If theres something wrong with the file, explain the error to the user and ask to fix it"
             "- If the user declined a change, do not propose the same change again. Follow their note.\n"
             "- After changing files, say briefly what changed and why.\n"
             "- Replies are shown as Markdown in a terminal, so keep them short and clear.\n"

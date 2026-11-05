@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 from rich.markup import escape
-from rich.prompt import Prompt
 
 from . import __version__, ai, config
 from .agent import Agent
@@ -32,6 +31,10 @@ def parse_args(argv=None):
     parser.add_argument("--allow-commands", action="store_true",
                         help="let the AI run shell commands without asking (risky; commands are not sandboxed)")
     return parser.parse_args(argv)
+
+
+def provider_options(names: list[str]) -> list[tuple[str, str]]:
+    return [(name, f"{config.PROVIDERS[name]['label']}  ({config.model_for(name)})") for name in names]
 
 
 def explain_error(error: BaseException, provider: str) -> str:
@@ -96,7 +99,14 @@ def handle_command(text: str, agent: Agent, ui: TerminalUI, pending: list) -> bo
         pending.clear()
         ui.info("Conversation cleared.")
     elif command == "/provider":
-        if argument not in config.PROVIDERS:
+        if not argument:
+            available = config.configured_providers()
+            if len(available) < 2:
+                ui.info("Only one provider has a key. Run `etcode keys` in another terminal to add another.")
+            else:
+                agent.provider = ui.pick_provider(provider_options(available), default=agent.provider)
+                ui.info(f"Now using {agent.provider} ({config.model_for(agent.provider)}).")
+        elif argument not in config.PROVIDERS:
             ui.warn("Usage: /provider openai | gemini | claude")
         elif argument not in config.configured_providers():
             ui.warn(f"No API key for {argument}. Run `etcode keys` in another terminal to add one.")
@@ -198,8 +208,7 @@ def main(argv=None) -> int:
         if len(configured) == 1 or not interactive:
             provider = configured[0]
         else:
-            provider = Prompt.ask(f"[bold {ACCENT}]Select provider[/]", choices=configured,
-                                  default=configured[0], console=ui.console)
+            provider = ui.pick_provider(provider_options(configured), default=configured[0])
     agent = Agent(provider, ws, ui, auto_approve=args.auto, allow_commands=args.allow_commands)
     pending: list[str] = []
 

@@ -1,6 +1,6 @@
 # Etcode
-
-An AI coding assistant for your terminal. It works with OpenAI, Gemini, and Claude, takes very large input, and can read and change files in the folder you run it from. You approve every change first.
+An AI coding assistant for your terminal. It works with OpenAI, Gemini, and Claude, and can read and change files in the folder you run it from. You approve every change first.
+<img width="1218" height="612" alt="Screenshot 2026-11-05 231259" src="https://github.com/user-attachments/assets/e2357b1e-30a4-4f00-a236-3b352a48dc58" />
 
 ## Install
 

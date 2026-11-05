@@ -14,6 +14,7 @@ ACCENT = "dark_orange"
 MAX_DIFF_LINES = 150
 COLLAPSE_PASTE_LINES = 25      # pastes longer than this show as a short label
 COLLAPSE_PASTE_CHARS = 2_000
+BOLD = "bold dark_orange"
 
 ETCODE_ASCII = """
 ███████╗████████╗ ██████╗  ██████╗ ██████╗ ███████╗
@@ -162,6 +163,28 @@ class TerminalUI:
 
     # ---- input -------------------------------------------------------------
 
+    def pick_provider(self, options: list[tuple[str, str]], default: str | None = None) -> str:
+        """Arrow-key menu. options is [(value, label), ...]. If the menu cannot run
+        (library missing), fall back to typing the name."""
+        try:
+            from InquirerPy import inquirer
+            from InquirerPy.base.control import Choice
+            from InquirerPy.utils import get_style
+        except ImportError:
+            return Prompt.ask(f"[bold {ACCENT}]Select provider[/]", choices=[v for v, _ in options],
+                              default=default or options[0][0], console=self.console)
+
+        style = get_style({"questionmark": "#ff8c00", "pointer": "#ff8c00 bold",
+                           "answer": "#ff8c00 bold"}, style_override=False)
+        return inquirer.select(
+            message="Select provider:",
+            choices=[Choice(value=value, name=label) for value, label in options],
+            default=default,
+            pointer=">",
+            instruction="(arrow keys, Enter to confirm)",
+            style=style,
+        ).execute()
+
     def read_input(self, toolbar=None) -> str:
         """Multi-line prompt. Enter sends, Alt+Enter adds a line. Big pastes are collapsed to a
         label while typing (redrawing thousands of lines freezes the terminal) and expanded on send."""
@@ -203,6 +226,7 @@ class TerminalUI:
                 mouse_support=False,
             )
         self.console.print()
+        self.console.print(Rule(style=BOLD))
         text = self._session.prompt(bottom_toolbar=toolbar)
         for label, data in self._pastes.items():
             text = text.replace(label, data)

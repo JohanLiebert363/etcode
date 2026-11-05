@@ -61,7 +61,8 @@ class TerminalUI:
     def banner(self, workspace) -> None:
         self.console.clear()
         self.console.print(ETCODE_ASCII, style=f"bold {ACCENT}", markup=False)
-        self.console.print(f"[bold {ACCENT}]ETCODE AI TERMINAL[/]")
+        self.console.print(f"[bold {ACCENT}]In terminal ai provider[/]")
+        self.console.print(f"[dim]Made by Edin Tahiri.[/dim]")
         self.console.print(f"[dim]Workspace: {escape(str(workspace))}[/dim]")
         self.console.print(Rule(style=ACCENT))
 
@@ -175,7 +176,7 @@ class TerminalUI:
                               default=default or options[0][0], console=self.console)
 
         style = get_style({"questionmark": "#ff8c00", "pointer": "#ff8c00 bold",
-                           "answer": "#ff8c00 bold"}, style_override=False)
+                           "answer": "#ff8c00 bold", "message": "#efb679"}, style_override=False)
         return inquirer.select(
             message="Select provider:",
             choices=[Choice(value=value, name=label) for value, label in options],

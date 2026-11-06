@@ -174,8 +174,8 @@ class TerminalUI:
             from InquirerPy import inquirer
             from InquirerPy.base.control import Choice
             from InquirerPy.utils import get_style
-            from agent import estimated_tokens
-            self.console.print(f"Used tokens: ",estimated_tokens(self),style="dark orange")
+            #from agent import estimated_tokens
+            #self.console.print(f"Used tokens: ",estimated_tokens(self),style="dark orange")
         except ImportError:
             return Prompt.ask(f"[bold {ACCENT}]Select provider[/]", choices=[v for v, _ in options],
                               default=default or options[0][0], console=self.console)

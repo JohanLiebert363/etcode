@@ -86,7 +86,7 @@ class TerminalUI:
         self.console.print(Rule(f"[bold {ACCENT}]ETCODE[/]", style=ACCENT, align="left"))
         self.console.print(Markdown(text))
         self.console.print(Rule(style=ACCENT))
-        self.console.print(f"Used tokens: ",estimated_tokens(),style="dark orange")
+        self.console.print(f"Used tokens: ",estimated_tokens(self),style="dark orange")
 
 
     def show_note(self, text: str) -> None:

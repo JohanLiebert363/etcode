@@ -1,7 +1,10 @@
 """Everything the user sees and types in the terminal."""
 from __future__ import annotations
 
+import time
+
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
@@ -32,20 +35,64 @@ HELP_TEXT = """\
   Paste            any amount of text is fine and nothing is sent until you press Enter.
                    Big pastes show as [Pasted text #1: N lines]; the full text is sent.
   @path/to/file    attach a file's contents to your message
+  etcode --continue   pick up your last conversation
   cat big.txt | etcode      send a very large input without the prompt
 
 [bold]Commands[/bold]
   /help            show this help
   /clear           forget the conversation
-  /provider NAME   switch AI (openai, gemini, claude)
+  /provider [NAME] switch AI: pick from a menu, or name it (openai, gemini, claude)
+  /stream [on|off] show replies as they are written
+  /save [NAME]     save this conversation; /load NAME restores it; /sessions lists them
+  /init            have the AI write an ETCODE.md with instructions for this project
   /auto [on|off]   apply file changes without asking (commands still ask)
   /undo            undo the last file change
   /cd FOLDER       change the folder the AI works in
   /ls [FOLDER]     list files
   !COMMAND         run a shell command yourself; its output goes with your next message
                    (/run COMMAND does the same)
-  /status          show provider, model, workspace and context size
+  /status          show provider, model, workspace, context size and token use
   /exit            quit"""
+
+
+class _StreamView:
+    """Shows the AI's text while it is being written. A spinner runs until the first word."""
+
+    def __init__(self, ui):
+        self.ui = ui
+        self.text = ""
+        self.shown = False
+        self._status = ui.status("Thinking...")
+        self._live = None
+        self._last_draw = 0.0
+
+    def __enter__(self):
+        self._status.start()
+        return self
+
+    def write(self, piece: str) -> None:
+        if not self.shown:
+            self.shown = True
+            self._status.stop()
+            self.ui.console.print()
+            self.ui.console.print(Rule(f"[bold {ACCENT}]ETCODE[/]", style=ACCENT, align="left"))
+            self._live = Live(Markdown(""), console=self.ui.console, refresh_per_second=10,
+                              vertical_overflow="visible")
+            self._live.start()
+        self.text += piece
+        now = time.monotonic()
+        if now - self._last_draw > 0.1:       # re-parsing Markdown on every word would be slow
+            self._live.update(Markdown(self.text))
+            self._last_draw = now
+
+    def __exit__(self, *exc):
+        if self._live is not None:
+            self._live.update(Markdown(self.text))
+            self._live.stop()
+            self.ui.console.print(Rule(style=ACCENT))
+        else:
+            self._status.stop()
+        return False
 
 
 class TerminalUI:
@@ -80,14 +127,11 @@ class TerminalUI:
         text = message or f"{type(error).__name__}: {error}"
         self.console.print(f"[red]{escape(text)}[/red]")
 
-    def show_answer(self, text: str, ) -> None:
-
+    def show_answer(self, text: str) -> None:
         self.console.print()
         self.console.print(Rule(f"[bold {ACCENT}]ETCODE[/]", style=ACCENT, align="left"))
         self.console.print(Markdown(text))
         self.console.print(Rule(style=ACCENT))
-
-
 
     def show_note(self, text: str) -> None:
         self.console.print(Markdown(text), style="dim")
@@ -112,8 +156,25 @@ class TerminalUI:
 
     # ---- commands ----------------------------------------------------------
 
-    def show_command(self, command: str) -> None:
-        self.console.print(f"[dim]  $ {escape(command)}[/dim]")
+    def show_command(self, command: str, auto: bool = False) -> None:
+        note = "  (read-only, ran without asking)" if auto else ""
+        self.console.print(f"[dim]  $ {escape(command)}{escape(note)}[/dim]")
+
+    def show_usage(self, text: str) -> None:
+        self.console.print(f"[dim]{escape(text)}[/dim]")
+
+    def stream_reply(self):
+        """Use as `with ui.stream_reply() as s:` then call s.write(text) as text arrives."""
+        return _StreamView(self)
+
+    def offer_fallback(self, current_label: str, options: list[tuple[str, str]]):
+        """After a rate limit: pick another AI to continue with, or None to stop."""
+        if not self.interactive:
+            return None
+        self.warn(f"{current_label} has reached its limit.")
+        choice = self.pick_provider(options + [("", "Stop here (I will try again later)")],
+                                    default=options[0][0], message="Continue with another AI?")
+        return choice or None
 
     def show_command_output(self, command: str, output: str) -> None:
         self.console.print(Panel(Text(output.rstrip() or "(no output)"), title=Text(f"$ {command}"),
@@ -167,30 +228,29 @@ class TerminalUI:
 
     # ---- input -------------------------------------------------------------
 
-    def pick_provider(self, options: list[tuple[str, str]], default: str | None = None, used_tokens: int | None = None) -> str:
+    def pick_provider(self, options: list[tuple[str, str]], default: str | None = None,
+                      message: str = "Select provider:") -> str:
         """Arrow-key menu. options is [(value, label), ...]. If the menu cannot run
         (library missing), fall back to typing the name."""
-        if used_tokens is not None:
-            self.console.print(f"Used tokens: {used_tokens:,}", style=ACCENT)
         try:
             from InquirerPy import inquirer
             from InquirerPy.base.control import Choice
             from InquirerPy.utils import get_style
         except ImportError:
-            return Prompt.ask(f"[bold {ACCENT}]Select provider[/]", choices=[v for v, _ in options],
-                              default=default or options[0][0], console=self.console)
+            typed = Prompt.ask(f"[bold {ACCENT}]{escape(message)}[/]", choices=[v or "stop" for v, _ in options],
+                               default=default or options[0][0], console=self.console)
+            return "" if typed == "stop" else typed
 
-        style = get_style({"message": "#efb679", "questionmark": "#ff8c00", "pointer": "#ff8c00 bold",
+        style = get_style({"question": "#efb679", "questionmark": "#ff8c00", "pointer": "#ff8c00 bold",
                            "answer": "#ff8c00 bold", }, style_override=False)
         return inquirer.select(
-            message="Select provider:",
+            message=message,
             choices=[Choice(value=value, name=label) for value, label in options],
             default=default,
             pointer=">",
             instruction="(arrow keys, Enter to confirm)",
             style=style,
         ).execute()
-
 
     def read_input(self, toolbar=None) -> str:
         """Multi-line prompt. Enter sends, Alt+Enter adds a line. Big pastes are collapsed to a

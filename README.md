@@ -1,4 +1,6 @@
 # Etcode
+[![Tests](https://github.com/JohanLiebert363/etcode/actions/workflows/tests.yml/badge.svg)](https://github.com/JohanLiebert363/etcode/actions/workflows/tests.yml)
+
 An AI coding assistant for your terminal. It works with OpenAI, Gemini, and Claude, and can read and change files in the folder you run it from. You approve every change first.
 <img width="1218" height="612" alt="Screenshot 2026-11-05 231259" src="https://github.com/user-attachments/assets/e2357b1e-30a4-4f00-a236-3b352a48dc58" />
 
@@ -50,10 +52,29 @@ You can also set `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `ANTHROPIC_API_KEY` inst
 | `/ls [folder]` | list files |
 | `/undo` | undo the last file change |
 | `/auto on` | apply changes without asking (`/auto off` to stop) |
-| `/provider claude` | switch AI mid-session |
+| `/provider` | pick another AI from a menu (or type `/provider claude`) |
+| `/stream on\|off` | show replies as they are written, or only when complete |
+| `/save name`, `/load name`, `/sessions` | save, restore and list conversations |
+| `/init` | have the AI write an `ETCODE.md` for the current project |
 | `/status`, `/clear`, `/help`, `/exit` | the rest of the commands |
 
-Options: `etcode --allow-commands` lets the AI run commands without asking (risky), `etcode -w FOLDER` works on another folder, `etcode -p openai|gemini|claude` skips the provider question, `etcode --auto` starts with auto-approve on, `etcode --version`.
+Options: `etcode --continue` (or `-c`) picks up your last conversation, `etcode --allow-commands` lets the AI run commands without asking (risky), `etcode -w FOLDER` works on another folder, `etcode -p openai|gemini|claude` skips the provider question, `etcode --auto` starts with auto-approve on, `etcode --version`.
+
+## Project instructions (ETCODE.md)
+
+Put a file called `ETCODE.md` in a project folder and Etcode reads it on every request: how to build and test, coding style, files never to touch. Run `/init` and the AI writes a first version for you (you approve it like any file). A global `ETCODE.md` in your user folder (`%APPDATA%\etcode` on Windows, `~/.config/etcode` elsewhere) applies to every project. Only keep instructions you trust in these files, and be careful with an `ETCODE.md` that came from someone else's repository.
+
+## Replies, tokens and cost
+
+Replies appear as they are written. After each one you see the tokens used and, when the model has a known price, an estimate at list price, for this turn and for the session. `~` marks numbers the provider did not report and Etcode estimated. Free plans are not billed, so treat the cost as what the same use would cost on a paid plan.
+
+## Saving conversations
+
+Every reply is autosaved, so `etcode --continue` resumes where you stopped. `/save name` and `/load name` keep named conversations. Files live in your user folder (`sessions`), readable only by you, and contain everything in the conversation, including anything you pasted. `/clear` also deletes the autosave. Turn autosave off with `ETCODE_AUTOSAVE=0`.
+
+## When the AI hits a rate limit
+
+If a provider's limit is reached, Etcode offers to carry on with another provider that has a key. Set `ETCODE_AUTO_FALLBACK=1` to switch without asking.
 
 ## How file changes work
 
@@ -67,6 +88,8 @@ The AI can list, search, read, create, edit, and delete files. Every write, edit
 ## Commands the AI runs
 
 The AI can run shell commands (tests, builds, git) with a `run_command` tool. Every command is shown and needs your `y`. `/auto` only covers file edits, never commands.
+
+A short list of read-only commands runs without asking and is shown with a note: `git status`, `log`, `diff`, `show`, `ls-files`, `branch` (listing only), `ls`/`dir` inside the folder, and `--version` checks. Anything with pipes, redirects, quotes, variables or paths outside the folder still asks. Set `ETCODE_SAFE_COMMANDS=0` to be asked every time. Running git in a repository you do not trust can run helpers that repository configures, so turn this off there.
 
 Commands are **not sandboxed**: once you approve one, it can do anything you can do in that terminal. Read it before you press `y`. Each command runs in a fresh shell in the workspace folder, with a time limit (60 seconds by default, 10 minutes at most), and long output is cut.
 
@@ -91,6 +114,10 @@ If a message fails, press the up arrow to bring it back. Daily limits and unpaid
 | `ETCODE_MAX_STEPS` | 25 | requests the AI may make in one turn |
 | `ETCODE_REQUESTS_PER_MINUTE` | 0 (off) | space requests out to stay under a provider limit |
 | `ETCODE_KEY_FILE` | user folder | where keys are saved |
+| `ETCODE_STREAM` | on | `0` shows replies only when complete |
+| `ETCODE_AUTO_FALLBACK` | off | `1` switches AI on a rate limit without asking |
+| `ETCODE_SAFE_COMMANDS` | on | `0` asks before every command |
+| `ETCODE_AUTOSAVE` | on | `0` stops saving conversations |
 
 ## Develop
 

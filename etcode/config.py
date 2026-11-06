@@ -32,10 +32,26 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _flag(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in ("0", "false", "no", "off", "")
+
+
+STREAM = _flag("ETCODE_STREAM", True)                # show replies as they are written
+AUTO_FALLBACK = _flag("ETCODE_AUTO_FALLBACK", False)  # switch AI on a rate limit without asking
+SAFE_COMMANDS = _flag("ETCODE_SAFE_COMMANDS", True)  # run read-only commands without asking
+AUTOSAVE = _flag("ETCODE_AUTOSAVE", True)            # save the conversation after each reply
+MAX_INSTRUCTION_CHARS = 20_000                       # size cap for ETCODE.md
 REQUEST_TIMEOUT = _int_env("ETCODE_TIMEOUT", 120)            # seconds per request
 MAX_CONTEXT_TOKENS = _int_env("ETCODE_MAX_CONTEXT_TOKENS", 120_000)  # history budget
 MAX_STEPS = _int_env("ETCODE_MAX_STEPS", 25)                  # requests per turn
 REQUESTS_PER_MINUTE = _int_env("ETCODE_REQUESTS_PER_MINUTE", 0)  # 0 = no pacing
+
+
+def sessions_dir() -> Path:
+    return config_dir() / "sessions"
 
 
 def model_for(provider: str) -> str:

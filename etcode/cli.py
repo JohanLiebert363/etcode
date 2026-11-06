@@ -8,14 +8,23 @@ from pathlib import Path
 
 from rich.markup import escape
 
-from . import __version__, ai, config
-from .agent import Agent
+import time
+
+from . import __version__, ai, config, sessions
+from .agent import Agent, describe_usage
 from .attach import expand_mentions
 from .tools import ToolError, Workspace
 from .ui import ACCENT, HELP_TEXT, TerminalUI
 
 COMMANDS = {"/help", "/exit", "/quit", "/clear", "/provider", "/auto", "/undo", "/status",
-            "/cd", "/ls", "/run"}
+            "/cd", "/ls", "/run", "/stream", "/save", "/load", "/sessions"}
+
+INIT_PROMPT = (
+    "Look at this project: list the files, then read the main config files and a few key source files. "
+    "Then create a concise ETCODE.md in the workspace root for future AI sessions. It should say what the "
+    "project is, how to install, run and test it, the coding conventions you can see, and anything that "
+    "should never be changed. Keep it under 60 lines and do not invent facts."
+)
 
 
 def parse_args(argv=None):
@@ -27,6 +36,8 @@ def parse_args(argv=None):
     keys.add_argument("--no-browser", action="store_true", help="do not open the browser automatically")
     parser.add_argument("-w", "--workspace", default=".", help="folder the AI may read and change (default: current folder)")
     parser.add_argument("-p", "--provider", choices=list(config.PROVIDERS), help="skip the provider question")
+    parser.add_argument("-c", "--continue", dest="continue_", action="store_true",
+                        help="pick up your last conversation")
     parser.add_argument("--auto", action="store_true", help="apply file changes without asking (use /undo to revert)")
     parser.add_argument("--allow-commands", action="store_true",
                         help="let the AI run shell commands without asking (risky; commands are not sandboxed)")
@@ -97,6 +108,7 @@ def handle_command(text: str, agent: Agent, ui: TerminalUI, pending: list) -> bo
     elif command == "/clear":
         agent.clear()
         pending.clear()
+        sessions.delete("last")
         ui.info("Conversation cleared.")
     elif command == "/provider":
         if not argument:
@@ -149,6 +161,43 @@ def handle_command(text: str, agent: Agent, ui: TerminalUI, pending: list) -> bo
             ui.warn(str(error))
     elif command == "/run":
         run_user_command(argument, agent, ui, pending)
+    elif command == "/stream":
+        if argument in ("on", "off"):
+            agent.streaming = argument == "on"
+        elif argument == "":
+            agent.streaming = not agent.streaming
+        else:
+            ui.warn("Usage: /stream on | off")
+            return False
+        ui.info("Streaming is " + ("ON: replies appear as they are written." if agent.streaming
+                                   else "OFF: replies appear when complete."))
+    elif command == "/save":
+        name = argument or time.strftime("session-%Y%m%d-%H%M")
+        if not agent.messages:
+            ui.warn("Nothing to save yet.")
+        else:
+            try:
+                sessions.save(name, agent)
+                ui.info(f"Saved as {name}. Restore it with /load {name}. It is stored on this computer "
+                        "and includes everything in this conversation.")
+            except (OSError, sessions.SessionError) as error:
+                ui.warn(f"Could not save: {error}")
+    elif command == "/load":
+        if not argument:
+            ui.warn("Usage: /load NAME  (see /sessions)")
+        else:
+            try:
+                data = sessions.load(argument)
+            except sessions.SessionError as error:
+                ui.warn(str(error))
+            else:
+                restore_session(agent, ui, data)
+    elif command == "/sessions":
+        found = sessions.list_sessions()
+        if not found:
+            ui.info("No saved sessions yet. Use /save NAME.")
+        for name, saved_at, count in found:
+            ui.info(f"{name}  ({saved_at}, {count} messages)")
     elif command == "/status":
         ui.console.print(
             f"[dim]Provider: {agent.provider} ({escape(config.model_for(agent.provider))})\n"
@@ -157,9 +206,29 @@ def handle_command(text: str, agent: Agent, ui: TerminalUI, pending: list) -> bo
             f"(limit {config.MAX_CONTEXT_TOKENS:,})\n"
             f"Files changed: {agent.changes_applied}, commands run by the AI: {agent.commands_run}\n"
             f"Auto-approve files: {'on' if agent.auto_approve else 'off'}, "
-            f"AI commands without asking: {'on' if agent.allow_commands else 'off'}[/dim]"
+            f"AI commands without asking: {'on' if agent.allow_commands else 'off'}, "
+            f"streaming: {'on' if agent.streaming else 'off'}\n"
+            f"Project instructions: {'ETCODE.md loaded' if agent.instructions() else 'none (try /init)'}\n"
+            f"Tokens this session: {escape(describe_usage(agent.usage))}[/dim]"
         )
     return False
+
+
+def restore_session(agent: Agent, ui: TerminalUI, data: dict) -> None:
+    sessions.restore(agent, data)
+    ui.info(f"Restored {len(data['messages'])} messages from {data.get('saved_at', 'an earlier session')}.")
+    if data.get("workspace") and data["workspace"] != str(agent.ws.root):
+        ui.warn(f"That conversation was in {data['workspace']}. You are in {agent.ws.root}. "
+                "Use /cd to go back if you want the same files.")
+
+
+def autosave(agent: Agent, ui: TerminalUI) -> None:
+    if not config.AUTOSAVE or not agent.messages:
+        return
+    try:
+        sessions.save("last", agent)
+    except OSError as error:
+        ui.warn(f"Could not autosave the conversation: {error}")
 
 
 def run_once(agent: Agent, ui: TerminalUI, text: str, pending: list | None = None) -> None:
@@ -209,7 +278,8 @@ def main(argv=None) -> int:
             provider = configured[0]
         else:
             provider = ui.pick_provider(provider_options(configured), default=configured[0])
-    agent = Agent(provider, ws, ui, auto_approve=args.auto, allow_commands=args.allow_commands)
+    agent = Agent(provider, ws, ui, auto_approve=args.auto, allow_commands=args.allow_commands,
+                  streaming=config.STREAM and interactive)
     pending: list[str] = []
 
     # Piped input: `cat big.txt | etcode`
@@ -224,6 +294,12 @@ def main(argv=None) -> int:
             ui.error(error, explain_error(error, provider))
             return 1
         return 0
+
+    if args.continue_:
+        try:
+            restore_session(agent, ui, sessions.load("last"))
+        except sessions.SessionError as error:
+            ui.warn(f"{error} Starting a new conversation.")
 
     ui.console.print(f"\n[bold {ACCENT}]Using:[/] {provider} ({escape(config.model_for(provider))})")
     ui.info("Enter sends. Alt+Enter adds a line. @file attaches a file. !command runs a command. /help lists commands.")
@@ -244,13 +320,16 @@ def main(argv=None) -> int:
             run_user_command(text[1:].strip(), agent, ui, pending)
             continue
         first_word = text.split(None, 1)[0].lower()
-        if first_word in COMMANDS and "\n" not in text:
+        if first_word == "/init" and "\n" not in text:
+            text = INIT_PROMPT
+        elif first_word in COMMANDS and "\n" not in text:
             if handle_command(text, agent, ui, pending):
                 return 0
             continue
         changes_before = agent.changes_applied
         try:
             run_once(agent, ui, text, pending)
+            autosave(agent, ui)
         except KeyboardInterrupt:
             ui.warn("Cancelled.")
         except Exception as error:

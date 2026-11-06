@@ -6,25 +6,51 @@ import platform
 
 from . import ai
 from . import config
+from . import safety
 from . import tools
+
+
+def new_totals() -> dict:
+    return {"prompt": 0, "completion": 0, "cost": 0.0, "cost_known": True, "estimated": False}
+
+
+def add_usage(totals: dict, usage: dict) -> None:
+    totals["prompt"] += usage["prompt"]
+    totals["completion"] += usage["completion"]
+    totals["estimated"] = totals["estimated"] or usage["estimated"]
+    if usage["cost"] is None:
+        totals["cost_known"] = False
+    else:
+        totals["cost"] += usage["cost"]
+
+
+def describe_usage(totals: dict) -> str:
+    mark = "~" if totals["estimated"] else ""
+    text = f"{mark}{totals['prompt']:,} in, {mark}{totals['completion']:,} out"
+    if totals["cost_known"] and totals["cost"] > 0:
+        text += f", about ${totals['cost']:.4f} at list price"
+    return text
 
 
 class Agent:
     def __init__(self, provider: str, workspace: tools.Workspace, ui, auto_approve: bool = False,
-                 allow_commands: bool = False):
+                 allow_commands: bool = False, streaming: bool = False):
         self.provider = provider
         self.ws = workspace
         self.ui = ui
         self.auto_approve = auto_approve      # file changes only
         self.allow_commands = allow_commands  # run commands without asking
+        self.streaming = streaming            # show replies as they are written
         self.commands_run = 0
+        self.usage = new_totals()             # whole session
+        self._turn = new_totals()             # current turn
         self.messages: list[dict] = []
         self.changes_applied = 0
 
     # ---- helpers -----------------------------------------------------------
 
     def system_prompt(self) -> dict:
-        return {"role": "system", "content": (
+        base = (
             "You are Etcode, an AI coding assistant running in the user's terminal.\n"
             f"Workspace folder: {self.ws.root}\n"
             f"Operating system: {platform.system()}\n\n"
@@ -43,13 +69,31 @@ class Agent:
             "- After changing files, say briefly what changed and why.\n"
             "- Replies are shown as Markdown in a terminal, so keep them short and clear.\n"
             "The user may attach files with @path; their contents appear in the message."
-        )}
+        )
+        extra = self.instructions()
+        if extra:
+            base += "\n\nProject instructions from the user (follow them):\n" + extra
+        return {"role": "system", "content": base}
+
+    def instructions(self) -> str:
+        """Text of ETCODE.md in the workspace, plus your global one. Read on every request, so edits apply at once."""
+        parts = []
+        for label, path in (("your global ETCODE.md", config.config_dir() / "ETCODE.md"),
+                            ("ETCODE.md in this folder", self.ws.root / "ETCODE.md")):
+            try:
+                text = path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError):
+                continue
+            if text:
+                parts.append(f"From {label}:\n{text[:config.MAX_INSTRUCTION_CHARS]}")
+        return "\n\n".join(parts)
 
     def estimated_tokens(self) -> int:
         return ai.estimate_tokens(self.messages)
 
     def clear(self) -> None:
         self.messages.clear()
+        self.usage = new_totals()
 
     def _trim(self) -> None:
         self.messages, dropped = ai.trim_history(self.messages, config.MAX_CONTEXT_TOKENS)
@@ -62,6 +106,7 @@ class Agent:
         user_message = {"role": "user", "content": user_text}
         self.messages.append(user_message)
         applied_before = self.changes_applied
+        self._turn = new_totals()
         try:
             self._loop()
         except BaseException:
@@ -75,13 +120,18 @@ class Agent:
                 self.messages.append({"role": "assistant", "content":
                                       "(This turn was interrupted after some files were changed.)"})
             raise
+        show = getattr(self.ui, "show_usage", None)
+        if show and self._turn["prompt"]:
+            show(f"This turn: {describe_usage(self._turn)}. Session: {describe_usage(self.usage)}.")
 
     def _loop(self) -> None:
         for _ in range(config.MAX_STEPS):
             self._trim()
-            with self.ui.status("Thinking..."):
-                reply = ai.chat(self.provider, [self.system_prompt()] + self.messages,
-                                tools=tools.TOOL_SPECS, notify=self.ui.warn)
+            reply, streamed = self._ask_model()
+            usage = getattr(reply, "usage", None)
+            if usage:
+                add_usage(self._turn, usage)
+                add_usage(self.usage, usage)
 
             text = getattr(reply, "content", None) or ""
             raw_calls = getattr(reply, "tool_calls", None) or []
@@ -95,10 +145,11 @@ class Agent:
             self.messages.append(entry)
 
             if not calls:
-                self.ui.show_answer(text or "(The AI sent an empty reply.)")
+                if not streamed:
+                    self.ui.show_answer(text or "(The AI sent an empty reply.)")
                 return
 
-            if text:
+            if text and not streamed:
                 self.ui.show_note(text)
             pending = list(calls)
             try:
@@ -115,6 +166,41 @@ class Agent:
                 raise
 
         self.ui.warn(f"Stopped after {config.MAX_STEPS} steps. Send another message to continue.")
+
+    def _ask_model(self):
+        """Ask the AI for the next step. Returns (reply, text_was_already_shown).
+        On a rate limit, offers to continue with another configured provider."""
+        while True:
+            messages = [self.system_prompt()] + self.messages
+            try:
+                if self.streaming:
+                    with self.ui.stream_reply() as stream:
+                        reply = ai.chat(self.provider, messages, tools=tools.TOOL_SPECS,
+                                        notify=self.ui.warn, on_text=stream.write)
+                    return reply, stream.shown
+                with self.ui.status("Thinking..."):
+                    reply = ai.chat(self.provider, messages, tools=tools.TOOL_SPECS, notify=self.ui.warn)
+                return reply, False
+            except Exception as error:
+                if not ai.is_rate_limit(error):
+                    raise
+                other = self._fallback_provider()
+                if other is None:
+                    raise
+                self.provider = other
+
+    def _fallback_provider(self):
+        others = [name for name in config.configured_providers() if name != self.provider]
+        if not others:
+            return None
+        if config.AUTO_FALLBACK:
+            self.ui.warn(f"Rate limit reached. Switching to {others[0]}.")
+            return others[0]
+        offer = getattr(self.ui, "offer_fallback", None)
+        if offer is None:
+            return None
+        labels = [(name, f"{config.PROVIDERS[name]['label']}  ({config.model_for(name)})") for name in others]
+        return offer(config.PROVIDERS[self.provider]["label"], labels) or None
 
     # ---- tool calls --------------------------------------------------------
 
@@ -154,8 +240,8 @@ class Agent:
             command = kwargs.get("command")
             if not isinstance(command, str) or not command.strip():
                 raise tools.ToolError("The command is empty.")
-            if self.allow_commands:
-                self.ui.show_command(command)
+            if self.allow_commands or safety.is_read_only(command):
+                self.ui.show_command(command, auto=not self.allow_commands)
             else:
                 decision, note = self.ui.confirm_command(command, str(self.ws.root))
                 if decision != "yes":

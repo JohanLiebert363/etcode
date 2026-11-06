@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 from . import config
 
@@ -13,6 +15,14 @@ _last_request = [0.0]
 
 class MissingKeyError(ValueError):
     pass
+
+
+@dataclass
+class Reply:
+    """One answer from the AI. usage = {prompt, completion, estimated, cost} (cost may be None)."""
+    content: str = ""
+    tool_calls: list = field(default_factory=list)
+    usage: dict | None = None
 
 
 def _transient_types() -> tuple:
@@ -65,8 +75,85 @@ def _pace(notify) -> None:
     _last_request[0] = time.monotonic()
 
 
-def chat(provider: str, messages: list, tools: list | None = None, notify=None):
-    """Send one request and return the assistant message (has .content and .tool_calls)."""
+def _get(obj, name):
+    if obj is None:
+        return None
+    return obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+
+
+def _merge_tool_call(calls: list, piece) -> None:
+    """Add one streamed tool-call fragment to the calls collected so far."""
+    index, call_id, function = _get(piece, "index"), _get(piece, "id"), _get(piece, "function")
+    name, arguments = _get(function, "name") or "", _get(function, "arguments") or ""
+    target = None
+    for existing in reversed(calls):
+        same_index = index is None or existing["index"] == index
+        same_id = not call_id or not existing["id"] or existing["id"] == call_id
+        if same_index and same_id and (index is not None or not call_id):
+            target = existing
+            break
+    if target is None:
+        target = {"index": index if index is not None else len(calls), "id": "", "name": "", "args": ""}
+        calls.append(target)
+    if call_id and not target["id"]:
+        target["id"] = call_id
+    if name and not target["name"]:
+        target["name"] = name
+    elif name and name != target["name"]:
+        target["name"] += name
+    target["args"] += arguments
+
+
+def collect_stream(chunks, on_text) -> Reply:
+    """Read a streamed response, calling on_text for each piece of text as it arrives."""
+    text, calls, usage = [], [], None
+    for chunk in chunks:
+        usage = _get(chunk, "usage") or usage
+        choices = _get(chunk, "choices") or []
+        delta = _get(choices[0], "delta") if choices else None
+        if delta is None:
+            continue
+        piece = _get(delta, "content")
+        if piece:
+            text.append(piece)
+            on_text(piece)
+        for tool_piece in _get(delta, "tool_calls") or []:
+            _merge_tool_call(calls, tool_piece)
+    tool_calls = [SimpleNamespace(id=c["id"] or f"call_{i}", type="function",
+                                  function=SimpleNamespace(name=c["name"], arguments=c["args"] or "{}"))
+                  for i, c in enumerate(calls) if c["name"]]
+    return Reply("".join(text), tool_calls, usage)
+
+
+def _cost(model: str, prompt: int, completion: int):
+    try:
+        import litellm
+
+        prompt_cost, completion_cost = litellm.cost_per_token(
+            model=model, prompt_tokens=prompt, completion_tokens=completion)
+        return float(prompt_cost) + float(completion_cost)
+    except Exception:
+        return None   # a model litellm has no prices for
+
+
+def finish_usage(reply: Reply, model: str, messages: list) -> Reply:
+    """Turn the provider's usage numbers (or an estimate) into reply.usage."""
+    raw = reply.usage
+    prompt, completion = _get(raw, "prompt_tokens"), _get(raw, "completion_tokens")
+    estimated = False
+    if not prompt:
+        prompt, estimated = estimate_tokens(messages), True
+    if not completion:
+        arguments = sum(len(c.function.arguments) for c in reply.tool_calls)
+        completion, estimated = int((len(reply.content) + arguments) / 3.5), True
+    reply.usage = {"prompt": int(prompt), "completion": int(completion), "estimated": estimated,
+                   "cost": _cost(model, int(prompt), int(completion))}
+    return reply
+
+
+def chat(provider: str, messages: list, tools: list | None = None, notify=None, on_text=None) -> Reply:
+    """Send one request and return a Reply. With on_text, the answer is streamed:
+    on_text(piece) is called as text arrives."""
     if provider not in config.PROVIDERS:
         raise ValueError(f"Unknown provider: {provider}")
 
@@ -83,8 +170,9 @@ def chat(provider: str, messages: list, tools: list | None = None, notify=None):
     litellm.drop_params = True
     litellm.suppress_debug_info = True
 
+    model = config.model_for(provider)
     kwargs = dict(
-        model=config.model_for(provider),
+        model=model,
         api_key=key,
         messages=messages,
         timeout=config.REQUEST_TIMEOUT,
@@ -93,12 +181,29 @@ def chat(provider: str, messages: list, tools: list | None = None, notify=None):
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
+    if on_text is not None:
+        kwargs["stream"] = True
+        kwargs["stream_options"] = {"include_usage": True}
 
     for attempt in range(MAX_ATTEMPTS):
         _pace(notify)
+        shown = [False]
+
+        def emit(piece, shown=shown):
+            shown[0] = True
+            on_text(piece)
+
         try:
-            return litellm.completion(**kwargs).choices[0].message
+            response = litellm.completion(**kwargs)
+            if on_text is not None:
+                reply = collect_stream(response, emit)
+            else:
+                message = response.choices[0].message
+                reply = Reply(message.content or "", list(message.tool_calls or []), getattr(response, "usage", None))
+            return finish_usage(reply, model, messages)
         except Exception as error:
+            if shown[0]:
+                raise    # text is already on screen; retrying would print it twice
             wait = retry_delay(error, attempt)
             if wait is None or attempt == MAX_ATTEMPTS - 1:
                 raise

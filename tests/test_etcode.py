@@ -16,7 +16,15 @@ from etcode import ai, attach, config, tools  # noqa: E402
 
 
 _DIRS = []
-atexit.register(lambda: [d.cleanup() for d in _DIRS])
+def _cleanup():
+    for d in _DIRS:
+        try:
+            d.cleanup()
+        except OSError:
+            pass          # Windows can keep a file locked for a moment
+
+
+atexit.register(_cleanup)
 
 
 def make_ws(files=None):
@@ -40,7 +48,10 @@ class WorkspaceTests(unittest.TestCase):
         tmp, ws = make_ws({"a.txt": "hi"})
         outside = tempfile.TemporaryDirectory()
         (Path(outside.name) / "secret.txt").write_text("nope")
-        os.symlink(outside.name, Path(tmp.name) / "link")
+        try:
+            os.symlink(outside.name, Path(tmp.name) / "link")
+        except (OSError, NotImplementedError):
+            self.skipTest("this system does not allow creating symlinks")
         with self.assertRaises(tools.ToolError):
             ws.read_file("link/secret.txt")
 

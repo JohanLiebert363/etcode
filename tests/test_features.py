@@ -66,7 +66,7 @@ class FakeUI:
     def tool_log(self, n, a): pass
     def tool_error(self, t): pass
     def show_change(self, c, d): pass
-    def show_command(self, c): self.shown.append(c)
+    def show_command(self, c, auto=False): self.shown.append((c, auto))
     def confirm_command(self, command, folder): return self.answers.pop(0)
 
 
@@ -140,7 +140,8 @@ class RateLimitTests(unittest.TestCase):
 
     def test_chat_waits_then_succeeds(self):
         import litellm
-        results = [RateLimitError(self.GEMINI), SimpleNamespace(choices=[SimpleNamespace(message="hello")])]
+        message = SimpleNamespace(content="hello", tool_calls=None)
+        results = [RateLimitError(self.GEMINI), SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=None)]
 
         def fake(**kw):
             r = results.pop(0)
@@ -152,7 +153,7 @@ class RateLimitTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"ANTHROPIC_API_KEY": "k"}), \
                 mock.patch.object(litellm, "completion", side_effect=fake), \
                 mock.patch.object(ai.time, "sleep", side_effect=sleeps.append):
-            self.assertEqual(ai.chat("claude", [], notify=notes.append), "hello")
+            self.assertEqual(ai.chat("claude", [], notify=notes.append).content, "hello")
         self.assertAlmostEqual(sleeps[0], 19.417945127)
         self.assertIn("Rate limit reached", notes[0])
 
@@ -215,3 +216,45 @@ class CliCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProviderMenuTests(unittest.TestCase):
+    OPTIONS = [("openai", "OpenAI  (openai/gpt-4o)"), ("gemini", "Google Gemini"), ("claude", "Anthropic Claude")]
+
+    def pick(self, keys, default=None):
+        import threading
+        from prompt_toolkit.application import create_app_session
+        from prompt_toolkit.input import create_pipe_input
+        from prompt_toolkit.output import DummyOutput
+        ui = TerminalUI(interactive=True)
+        ui.console = Console(file=io.StringIO())
+        with create_pipe_input() as pipe:
+            with create_app_session(input=pipe, output=DummyOutput()):
+                threading.Thread(target=lambda: pipe.send_text(keys), daemon=True).start()
+                return ui.pick_provider(self.OPTIONS, default=default)
+
+    def test_enter_picks_the_default(self):
+        self.assertEqual(self.pick("\r", default="gemini"), "gemini")
+
+    def test_arrow_keys_move_the_choice(self):
+        self.assertEqual(self.pick("\x1b[B\x1b[B\r"), "claude")      # down, down, enter
+        self.assertEqual(self.pick("\x1b[B\x1b[A\r"), "openai")      # down, up, enter
+
+    def test_falls_back_to_typing_without_the_library(self):
+        ui = TerminalUI(interactive=True)
+        ui.console = Console(file=io.StringIO())
+        with mock.patch.dict(sys.modules, {"InquirerPy": None}), \
+                mock.patch("etcode.ui.Prompt.ask", return_value="claude") as ask:
+            self.assertEqual(ui.pick_provider(self.OPTIONS), "claude")
+        self.assertEqual(ask.call_args.kwargs["choices"], ["openai", "gemini", "claude"])
+
+    def test_provider_command_without_argument_opens_the_menu(self):
+        tmp, ws = workspace()
+        ui = TerminalUI(interactive=False)
+        ui.console = Console(file=io.StringIO())
+        agent = agent_module.Agent("openai", ws, ui)
+        with mock.patch.object(config, "configured_providers", return_value=["openai", "claude"]), \
+                mock.patch.object(ui, "pick_provider", return_value="claude") as pick:
+            cli.handle_command("/provider", agent, ui, [])
+        self.assertEqual(agent.provider, "claude")
+        self.assertEqual([v for v, _ in pick.call_args.args[0]], ["openai", "claude"])

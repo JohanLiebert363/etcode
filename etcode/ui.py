@@ -80,12 +80,14 @@ class TerminalUI:
         text = message or f"{type(error).__name__}: {error}"
         self.console.print(f"[red]{escape(text)}[/red]")
 
-    def show_answer(self, text: str) -> None:
+    def show_answer(self, text: str, used_tokens: int) -> None:
 
         self.console.print()
         self.console.print(Rule(f"[bold {ACCENT}]ETCODE[/]", style=ACCENT, align="left"))
         self.console.print(Markdown(text))
         self.console.print(Rule(style=ACCENT))
+        if used_tokens is not None:
+            self.console.print(f"Used tokens: {used_tokens:,}", style=ACCENT)
 
 
 
@@ -167,15 +169,14 @@ class TerminalUI:
 
     # ---- input -------------------------------------------------------------
 
-    def pick_provider(self, options: list[tuple[str, str]], default: str | None = None) -> str:
+    def pick_provider(self, options: list[tuple[str, str]], default: str | None = None, used_tokens: int | None = None) -> str:
         """Arrow-key menu. options is [(value, label), ...]. If the menu cannot run
         (library missing), fall back to typing the name."""
+
         try:
             from InquirerPy import inquirer
             from InquirerPy.base.control import Choice
             from InquirerPy.utils import get_style
-            #from agent import estimated_tokens
-            #self.console.print(f"Used tokens: ",estimated_tokens(self),style="dark orange")
         except ImportError:
             return Prompt.ask(f"[bold {ACCENT}]Select provider[/]", choices=[v for v, _ in options],
                               default=default or options[0][0], console=self.console)

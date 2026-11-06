@@ -81,12 +81,12 @@ class TerminalUI:
         self.console.print(f"[red]{escape(text)}[/red]")
 
     def show_answer(self, text: str) -> None:
-        from agent import estimated_tokens
+
         self.console.print()
         self.console.print(Rule(f"[bold {ACCENT}]ETCODE[/]", style=ACCENT, align="left"))
         self.console.print(Markdown(text))
         self.console.print(Rule(style=ACCENT))
-        self.console.print(f"Used tokens: ",estimated_tokens(self),style="dark orange")
+
 
 
     def show_note(self, text: str) -> None:
@@ -174,6 +174,8 @@ class TerminalUI:
             from InquirerPy import inquirer
             from InquirerPy.base.control import Choice
             from InquirerPy.utils import get_style
+            from agent import estimated_tokens
+            self.console.print(f"Used tokens: ",estimated_tokens(self),style="dark orange")
         except ImportError:
             return Prompt.ask(f"[bold {ACCENT}]Select provider[/]", choices=[v for v, _ in options],
                               default=default or options[0][0], console=self.console)
@@ -188,6 +190,7 @@ class TerminalUI:
             instruction="(arrow keys, Enter to confirm)",
             style=style,
         ).execute()
+
 
     def read_input(self, toolbar=None) -> str:
         """Multi-line prompt. Enter sends, Alt+Enter adds a line. Big pastes are collapsed to a

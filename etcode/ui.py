@@ -81,14 +81,13 @@ class TerminalUI:
         self.console.print(f"[red]{escape(text)}[/red]")
 
     def show_answer(self, text: str) -> None:
-        from . import config
-        from .agent import Agent
+        from agent import estimated_tokens
         self.console.print()
         self.console.print(Rule(f"[bold {ACCENT}]ETCODE[/]", style=ACCENT, align="left"))
         self.console.print(Markdown(text))
         self.console.print(Rule(style=ACCENT))
-        self.console.print(f"Messages: {len(Agent.messages)}, about {Agent.estimated_tokens():,} tokens "
-                    f"(limit {config.MAX_CONTEXT_TOKENS:,})\n")
+        self.console.print(f"Used tokens: ",estimated_tokens(),style="dark orange")
+
 
     def show_note(self, text: str) -> None:
         self.console.print(Markdown(text), style="dim")

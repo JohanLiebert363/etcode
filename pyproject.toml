@@ -7,8 +7,8 @@ name = "etcode"
 description = "An AI coding assistant for your terminal (OpenAI, Gemini, Claude) that can edit your files with your approval."
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.9"
-version = "0.5.0"
+requires-python = ">=3.10"
+version = "0.5.1"
 dependencies = ["litellm", "rich", "prompt_toolkit", "InquirerPy", "flask", "mcp"]
 
 [project.scripts]

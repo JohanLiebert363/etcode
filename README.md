@@ -6,7 +6,7 @@ An AI coding assistant for your terminal. It works with OpenAI, Gemini, and Clau
 
 ## Install
 
-You need Python 3.9 or newer. On Windows, tick "Add python.exe to PATH" in the Python installer.
+You need Python 3.10 or newer. On Windows, tick "Add python.exe to PATH" in the Python installer.
 
 ```
 pip install pipx

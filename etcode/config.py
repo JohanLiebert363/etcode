@@ -39,6 +39,9 @@ def _flag(name: str, default: bool) -> bool:
     return value.strip().lower() not in ("0", "false", "no", "off", "")
 
 
+EFFORT_LEVELS = ("low", "medium", "high")
+_effort = os.environ.get("ETCODE_EFFORT", "").strip().lower()
+EFFORT = _effort if _effort in EFFORT_LEVELS else None   # how hard the AI thinks (/effort)
 STREAM = _flag("ETCODE_STREAM", True)                # show replies as they are written
 AUTO_FALLBACK = _flag("ETCODE_AUTO_FALLBACK", False)  # switch AI on a rate limit without asking
 SAFE_COMMANDS = _flag("ETCODE_SAFE_COMMANDS", True)  # run read-only commands without asking

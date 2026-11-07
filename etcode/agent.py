@@ -41,6 +41,7 @@ class Agent:
         self.auto_approve = auto_approve      # file changes only
         self.allow_commands = allow_commands  # run commands without asking
         self.streaming = streaming            # show replies as they are written
+        self.effort = config.EFFORT           # None, "low", "medium" or "high"
         self.commands_run = 0
         self.usage = new_totals()             # whole session
         self._turn = new_totals()             # current turn
@@ -167,6 +168,9 @@ class Agent:
 
         self.ui.warn(f"Stopped after {config.MAX_STEPS} steps. Send another message to continue.")
 
+    def _chat_kwargs(self) -> dict:
+        return {"effort": self.effort} if self.effort else {}
+
     def _ask_model(self):
         """Ask the AI for the next step. Returns (reply, text_was_already_shown).
         On a rate limit, offers to continue with another configured provider."""
@@ -176,20 +180,21 @@ class Agent:
                 if self.streaming:
                     with self.ui.stream_reply() as stream:
                         reply = ai.chat(self.provider, messages, tools=tools.TOOL_SPECS,
-                                        notify=self.ui.warn, on_text=stream.write)
+                                        notify=self.ui.warn, on_text=stream.write, **self._chat_kwargs())
                     return reply, stream.shown
                 with self.ui.status("Thinking..."):
-                    reply = ai.chat(self.provider, messages, tools=tools.TOOL_SPECS, notify=self.ui.warn)
+                    reply = ai.chat(self.provider, messages, tools=tools.TOOL_SPECS, notify=self.ui.warn,
+                                    **self._chat_kwargs())
                 return reply, False
             except Exception as error:
                 if not ai.is_rate_limit(error):
                     raise
-                other = self._fallback_provider()
+                other = self._fallback_provider(error)
                 if other is None:
                     raise
                 self.provider = other
 
-    def _fallback_provider(self):
+    def _fallback_provider(self, error: Exception):
         others = [name for name in config.configured_providers() if name != self.provider]
         if not others:
             return None
@@ -200,7 +205,7 @@ class Agent:
         if offer is None:
             return None
         labels = [(name, f"{config.PROVIDERS[name]['label']}  ({config.model_for(name)})") for name in others]
-        return offer(config.PROVIDERS[self.provider]["label"], labels) or None
+        return offer(config.PROVIDERS[self.provider]["label"], labels, ai.describe_rate_limit(error)) or None
 
     # ---- tool calls --------------------------------------------------------
 

@@ -10,7 +10,9 @@ from . import config
 
 MAX_ATTEMPTS = 4
 MAX_WAIT = 90          # never wait longer than this between retries (seconds)
+EFFORT_PROVIDERS = {"openai", "gemini"}   # Claude needs thinking blocks passed back with tools; not supported yet
 _last_request = [0.0]
+_learned: dict[str, int] = {}   # per-minute limits discovered from errors, per provider
 
 
 class MissingKeyError(ValueError):
@@ -49,6 +51,35 @@ def suggested_wait(error: Exception) -> float | None:
     return None
 
 
+def describe_rate_limit(error: Exception) -> str:
+    """Which limit was hit, in plain words."""
+    text = str(error).lower().replace(" ", "")
+    if "perday" in text:
+        return "its daily limit"
+    if "insufficient_quota" in text or "limit:0" in text:
+        return "its quota (the account may need billing turned on)"
+    if "perminute" in text or suggested_wait(error) is not None:
+        return "its per-minute limit"
+    return "its request limit"
+
+
+def learn_limit(provider: str, error: Exception):
+    """If the error states a per-minute limit ("limit: 5"), pace requests below it from now on.
+    Returns (limit, pace) when something new was learned. A pace set by the user always wins."""
+    text = str(error)
+    if "perminute" not in text.lower().replace(" ", "") or config.REQUESTS_PER_MINUTE:
+        return None
+    match = re.search(r'"quotaValue":\s*"(\d+)"', text) or re.search(r"limit:\s*(\d+)", text)
+    if not match:
+        return None
+    limit = int(match.group(1))
+    pace = max(1, limit - 1)
+    if limit < 1 or _learned.get(provider) == pace:
+        return None
+    _learned[provider] = pace
+    return limit, pace
+
+
 def retry_delay(error: Exception, attempt: int) -> float | None:
     """How long to wait before trying again, or None when retrying cannot help."""
     text = str(error).lower()
@@ -63,9 +94,9 @@ def retry_delay(error: Exception, attempt: int) -> float | None:
     return None
 
 
-def _pace(notify) -> None:
+def _pace(notify, provider: str | None = None) -> None:
     """Optional spacing between requests (ETCODE_REQUESTS_PER_MINUTE) for low-quota plans."""
-    per_minute = config.REQUESTS_PER_MINUTE
+    per_minute = config.REQUESTS_PER_MINUTE or _learned.get(provider, 0)
     if per_minute > 0:
         wait = _last_request[0] + 60.0 / per_minute - time.monotonic()
         if wait > 1 and notify:
@@ -151,7 +182,8 @@ def finish_usage(reply: Reply, model: str, messages: list) -> Reply:
     return reply
 
 
-def chat(provider: str, messages: list, tools: list | None = None, notify=None, on_text=None) -> Reply:
+def chat(provider: str, messages: list, tools: list | None = None, notify=None, on_text=None,
+         effort: str | None = None) -> Reply:
     """Send one request and return a Reply. With on_text, the answer is streamed:
     on_text(piece) is called as text arrives."""
     if provider not in config.PROVIDERS:
@@ -181,12 +213,14 @@ def chat(provider: str, messages: list, tools: list | None = None, notify=None, 
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
+    if effort and provider in EFFORT_PROVIDERS:
+        kwargs["reasoning_effort"] = effort
     if on_text is not None:
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
 
     for attempt in range(MAX_ATTEMPTS):
-        _pace(notify)
+        _pace(notify, provider)
         shown = [False]
 
         def emit(piece, shown=shown):
@@ -204,6 +238,10 @@ def chat(provider: str, messages: list, tools: list | None = None, notify=None, 
         except Exception as error:
             if shown[0]:
                 raise    # text is already on screen; retrying would print it twice
+            learned = learn_limit(provider, error) if is_rate_limit(error) else None
+            if learned and notify:
+                notify(f"This plan allows {learned[0]} requests per minute. "
+                       f"Etcode will now pace itself to {learned[1]} per minute.")
             wait = retry_delay(error, attempt)
             if wait is None or attempt == MAX_ATTEMPTS - 1:
                 raise

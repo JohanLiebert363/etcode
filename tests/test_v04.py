@@ -55,8 +55,9 @@ class FakeUI:
     def show_command(self, c, auto=False): self.commands.append((c, auto))
     def confirm_command(self, command, folder): raise AssertionError("should not have asked")
 
-    def offer_fallback(self, current, options):
+    def offer_fallback(self, current, options, reason=""):
         self.offered = options
+        self.reason = reason
         return self.fallback
 
     def stream_reply(self):
@@ -209,7 +210,7 @@ class AgentFeatureTests(unittest.TestCase):
         ui = FakeUI()
         _, agent = make_agent(ui, streaming=True)
 
-        def fake_chat(provider, messages, tools=None, notify=None, on_text=None):
+        def fake_chat(provider, messages, tools=None, notify=None, on_text=None, **kw):
             on_text("Hello")
             return ai.Reply("Hello")
 

@@ -10,14 +10,15 @@ from rich.markup import escape
 
 import time
 
-from . import __version__, ai, config, sessions
+from . import __version__, ai, config, sessions, skills
 from .agent import Agent, describe_usage
 from .attach import expand_mentions
 from .tools import ToolError, Workspace
 from .ui import ACCENT, HELP_TEXT, TerminalUI
 
 COMMANDS = {"/help", "/exit", "/quit", "/clear", "/provider", "/auto", "/undo", "/status",
-            "/cd", "/ls", "/run", "/stream", "/save", "/load", "/sessions"}
+            "/cd", "/ls", "/run", "/stream", "/save", "/load", "/sessions", "/effort", "/skills"}
+RESERVED = {c[1:] for c in COMMANDS} | {"init"}
 
 INIT_PROMPT = (
     "Look at this project: list the files, then read the main config files and a few key source files. "
@@ -171,6 +172,36 @@ def handle_command(text: str, agent: Agent, ui: TerminalUI, pending: list) -> bo
             return False
         ui.info("Streaming is " + ("ON: replies appear as they are written." if agent.streaming
                                    else "OFF: replies appear when complete."))
+    elif command == "/effort":
+        levels = list(config.EFFORT_LEVELS)
+        if argument.lower() in levels + ["default", "off"]:
+            choice = argument.lower()
+        elif argument == "":
+            choice = ui.pick_option(
+                [("default", "Default (the model decides)"), ("low", "Low: fastest, least thinking"),
+                 ("medium", "Medium"), ("high", "High: slowest, most thinking")],
+                default=agent.effort or "default", message="Reasoning effort:")
+        else:
+            ui.warn("Usage: /effort low | medium | high | default")
+            return False
+        agent.effort = choice if choice in levels else None
+        ui.info("Effort: " + (agent.effort or "default"))
+        if agent.effort and agent.provider not in ai.EFFORT_PROVIDERS:
+            ui.warn(f"{agent.provider} ignores this for now. It works with Gemini and OpenAI.")
+    elif command == "/skills":
+        sub, _, name = argument.partition(" ")
+        if sub.lower() == "new":
+            try:
+                path = skills.new_skill(agent.ws.root, name, RESERVED)
+            except (ValueError, OSError) as error:
+                ui.warn(str(error))
+            else:
+                ui.info(f"Created {path}. Edit it, then run it with /{path.stem}.")
+        else:
+            for skill in skills.load_all(agent.ws.root, RESERVED).values():
+                ui.console.print(f"[bold {ACCENT}]/{skill.name}[/]  {escape(skill.description)}  "
+                                 f"[dim]({skill.source})[/dim]", highlight=False)
+            ui.info("Make your own with /skills new NAME. Project skills live in .etcode/skills/.")
     elif command == "/save":
         name = argument or time.strftime("session-%Y%m%d-%H%M")
         if not agent.messages:
@@ -207,11 +238,23 @@ def handle_command(text: str, agent: Agent, ui: TerminalUI, pending: list) -> bo
             f"Files changed: {agent.changes_applied}, commands run by the AI: {agent.commands_run}\n"
             f"Auto-approve files: {'on' if agent.auto_approve else 'off'}, "
             f"AI commands without asking: {'on' if agent.allow_commands else 'off'}, "
-            f"streaming: {'on' if agent.streaming else 'off'}\n"
+            f"streaming: {'on' if agent.streaming else 'off'}, effort: {agent.effort or 'default'}\n"
             f"Project instructions: {'ETCODE.md loaded' if agent.instructions() else 'none (try /init)'}\n"
             f"Tokens this session: {escape(describe_usage(agent.usage))}[/dim]"
         )
     return False
+
+
+def expand_skill(text: str, agent: Agent, ui: TerminalUI):
+    """If text is /skillname [details], return the prompt to send. Returns None if it is not a skill."""
+    first, _, args = text.partition(" ")
+    if not re.fullmatch(r"/[a-z0-9][a-z0-9_-]*", first.lower()):
+        return None
+    skill = skills.load_all(agent.ws.root, RESERVED).get(first[1:].lower())
+    if skill is None:
+        return None
+    ui.info(f"Running skill /{skill.name}: {skill.description}")
+    return skills.render(skill, args)
 
 
 def restore_session(agent: Agent, ui: TerminalUI, data: dict) -> None:
@@ -322,6 +365,12 @@ def main(argv=None) -> int:
         first_word = text.split(None, 1)[0].lower()
         if first_word == "/init" and "\n" not in text:
             text = INIT_PROMPT
+        elif first_word not in COMMANDS and "\n" not in text and re.fullmatch(r"/[a-z0-9][a-z0-9_-]*", first_word):
+            expanded = expand_skill(text, agent, ui)
+            if expanded is None:
+                ui.warn(f"Unknown command {first_word}. Type /help for commands or /skills for skills.")
+                continue
+            text = expanded
         elif first_word in COMMANDS and "\n" not in text:
             if handle_command(text, agent, ui, pending):
                 return 0

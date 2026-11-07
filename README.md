@@ -56,9 +56,40 @@ You can also set `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `ANTHROPIC_API_KEY` inst
 | `/stream on\|off` | show replies as they are written, or only when complete |
 | `/save name`, `/load name`, `/sessions` | save, restore and list conversations |
 | `/init` | have the AI write an `ETCODE.md` for the current project |
+| `/effort` | how hard the AI thinks: low, medium, high or default (menu, or `/effort high`) |
+| `/skills` | list skills; run one with `/name`, create one with `/skills new name` |
+| `/review`, `/explain`, `/fix`, `/test`, `/commit`, `/plan` | built-in skills, see below |
 | `/status`, `/clear`, `/help`, `/exit` | the rest of the commands |
 
 Options: `etcode --continue` (or `-c`) picks up your last conversation, `etcode --allow-commands` lets the AI run commands without asking (risky), `etcode -w FOLDER` works on another folder, `etcode -p openai|gemini|claude` skips the provider question, `etcode --auto` starts with auto-approve on, `etcode --version`.
+
+## Skills
+
+A skill is a saved prompt you run with a slash. Type what you want after the name and it goes where `$ARGS` appears:
+
+| Skill | What it does |
+|---|---|
+| `/review` | reviews your uncommitted changes (bugs, risks, missing tests) without editing |
+| `/explain [file or topic]` | explains the project, a file or a function |
+| `/fix <problem>` | finds and fixes a problem with the smallest change, then checks it |
+| `/test [what]` | writes or updates tests and runs them |
+| `/commit` | drafts a commit message from your changes (it does not commit) |
+| `/plan <task>` | plans a task and lists the files it would touch, without changing anything |
+
+Make your own with `/skills new deploy`. This creates `.etcode/skills/deploy.md` in the project (commit it to share it with your team). Put skills in your user folder under `skills` to have them in every project. A file looks like this:
+
+```
+---
+description: Check the release notes
+---
+Read CHANGELOG.md and tell me what is missing for version $ARGS.
+```
+
+Project skills override global ones, which override built-in ones. A skill cannot replace a built-in command like `/help`. Skills are instructions to the AI, so only use skill files you trust, especially ones that came with someone else's repository. The AI itself cannot edit the skills folder.
+
+## Effort
+
+`/effort low|medium|high` sets how much the AI thinks before answering: higher is slower and more careful. `/effort default` lets the model decide, and `ETCODE_EFFORT` sets a starting level. It works with Gemini and OpenAI models that support thinking and is ignored by others. Claude is not supported yet.
 
 ## Project instructions (ETCODE.md)
 
@@ -82,7 +113,7 @@ The AI can list, search, read, create, edit, and delete files. Every write, edit
 
 - The AI can only reach files inside the folder where you started Etcode. `..` and symlinks pointing outside are blocked.
 - `.env`, `*.pem`, `*.key`, `api.json`, SSH keys, `.git`, and `.etcode` are blocked, so secrets are never sent to a provider.
-- The original of every changed file is copied to `.etcode/backups/` in that folder, and `/undo` restores it. Add `.etcode/` to the project's `.gitignore`.
+- The original of every changed file is copied to `.etcode/backups/` in that folder, and `/undo` restores it. Add `.etcode/backups/` to the project's `.gitignore` (but keep `.etcode/skills/` if you want to share skills).
 - Writes are atomic and keep your line endings (LF or CRLF).
 
 ## Commands the AI runs
@@ -95,7 +126,7 @@ Commands are **not sandboxed**: once you approve one, it can do anything you can
 
 ## Rate limits
 
-Etcode makes one request to the AI per step. Free plans allow few requests per minute (Gemini's free tier: 5), so a task that reads several files can hit the limit. Etcode waits for the time the provider asks for and retries. To avoid hitting it at all, set a pace:
+Etcode makes one request to the AI per step. Free plans allow few requests per minute (Gemini's free tier: 5), so a task that reads several files can hit the limit. Etcode waits for the time the provider asks for and retries. When the error states a per-minute limit, it learns the number and paces itself just below it for the rest of the session, so the limit stops coming back. The message says whether you hit the per-minute or the daily limit; daily limits do not clear by waiting, so Etcode offers another provider instead. To avoid hitting it at all, set a pace:
 
 ```
 setx ETCODE_REQUESTS_PER_MINUTE 4        (Windows, then open a new terminal)
@@ -114,6 +145,7 @@ If a message fails, press the up arrow to bring it back. Daily limits and unpaid
 | `ETCODE_MAX_STEPS` | 25 | requests the AI may make in one turn |
 | `ETCODE_REQUESTS_PER_MINUTE` | 0 (off) | space requests out to stay under a provider limit |
 | `ETCODE_KEY_FILE` | user folder | where keys are saved |
+| `ETCODE_EFFORT` | unset | starting effort: `low`, `medium` or `high` |
 | `ETCODE_STREAM` | on | `0` shows replies only when complete |
 | `ETCODE_AUTO_FALLBACK` | off | `1` switches AI on a rate limit without asking |
 | `ETCODE_SAFE_COMMANDS` | on | `0` asks before every command |

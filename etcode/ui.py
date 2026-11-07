@@ -45,6 +45,9 @@ HELP_TEXT = """\
   /stream [on|off] show replies as they are written
   /save [NAME]     save this conversation; /load NAME restores it; /sessions lists them
   /init            have the AI write an ETCODE.md with instructions for this project
+  /effort [LEVEL]  how hard the AI thinks: low, medium, high, or default (Gemini and OpenAI)
+  /skills          list skills (reusable prompts); run one with /NAME, make one with /skills new NAME
+                   built in: /review /explain /fix /test /commit /plan
   /auto [on|off]   apply file changes without asking (commands still ask)
   /undo            undo the last file change
   /cd FOLDER       change the folder the AI works in
@@ -167,11 +170,11 @@ class TerminalUI:
         """Use as `with ui.stream_reply() as s:` then call s.write(text) as text arrives."""
         return _StreamView(self)
 
-    def offer_fallback(self, current_label: str, options: list[tuple[str, str]]):
+    def offer_fallback(self, current_label: str, options: list[tuple[str, str]], reason: str = "its limit"):
         """After a rate limit: pick another AI to continue with, or None to stop."""
         if not self.interactive:
             return None
-        self.warn(f"{current_label} has reached its limit.")
+        self.warn(f"{current_label} has reached {reason}.")
         choice = self.pick_provider(options + [("", "Stop here (I will try again later)")],
                                     default=options[0][0], message="Continue with another AI?")
         return choice or None
@@ -230,6 +233,10 @@ class TerminalUI:
 
     def pick_provider(self, options: list[tuple[str, str]], default: str | None = None,
                       message: str = "Select provider:") -> str:
+        return self.pick_option(options, default, message)
+
+    def pick_option(self, options: list[tuple[str, str]], default: str | None = None,
+                    message: str = "Choose:") -> str:
         """Arrow-key menu. options is [(value, label), ...]. If the menu cannot run
         (library missing), fall back to typing the name."""
         try:
